@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 import os
+from contextlib import nullcontext
 import torch
 import numpy as np
 import gradio as gr
@@ -12,11 +13,15 @@ from diffsynth.pipelines.wan_video_neoverse import WanVideoNeoVersePipeline
 from diffsynth import save_video
 from diffsynth.utils.auxiliary import CameraTrajectory, load_video, homo_matrix_inverse
 from diffsynth.utils.app import extract_point_cloud, build_scene_glb
+from diffsynth.auxiliary_models.reconstructor_resolver import SUPPORTED_RECONSTRUCTORS
 
 parser = argparse.ArgumentParser()
+parser.add_argument("--reconstructor", type=str, default=None,
+                    choices=SUPPORTED_RECONSTRUCTORS,
+                    help="Built-in reconstructor selector")
 parser.add_argument("--reconstructor_path", type=str,
-                    default="models/NeoVerse/reconstructor.ckpt",
-                    help="Path to reconstructor checkpoint")
+                    default=None,
+                    help="Optional custom checkpoint path or override for the selected reconstructor")
 parser.add_argument("--low_vram", action="store_true",
                     help="Enable low-VRAM mode with model offloading")
 args, _ = parser.parse_known_args()
@@ -32,9 +37,10 @@ MASK_PATH = os.path.join(OUTPUT_ROOT, "mask.mp4")
 OUTPUT_PATH = os.path.join(OUTPUT_ROOT, "output.mp4")
 JSON_PATH = os.path.join(OUTPUT_ROOT, "trajectory.json")
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Loading NeoVerse pipeline (reconstructor: {args.reconstructor_path})...")
+print(f"Loading NeoVerse pipeline (reconstructor: {args.reconstructor or 'neoverse'})...")
 pipe = WanVideoNeoVersePipeline.from_pretrained(
     local_model_path="models",
+    reconstructor=args.reconstructor,
     reconstructor_path=args.reconstructor_path,
     lora_path="models/NeoVerse/loras/Wan21_T2V_14B_lightx2v_cfg_step_distill_lora_rank64.safetensors",
     lora_alpha=1.0,
@@ -149,7 +155,13 @@ def reconstruct(state):
     if pipe.vram_management_enabled:
         pipe.reconstructor.to(device)
 
-    with torch.amp.autocast("cuda", dtype=pipe.torch_dtype):
+    reconstructor_name = getattr(pipe.reconstructor, "neoverse_reconstructor_name", "neoverse")
+    autocast_context = (
+        torch.amp.autocast("cuda", dtype=pipe.torch_dtype)
+        if reconstructor_name == "neoverse" and str(device).startswith("cuda") and torch.cuda.is_available()
+        else nullcontext()
+    )
+    with autocast_context:
         predictions = pipe.reconstructor(views, is_inference=True, use_motion=False)
 
     # Low-VRAM: offload reconstructor back to CPU

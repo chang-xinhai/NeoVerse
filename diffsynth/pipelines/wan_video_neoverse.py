@@ -1,5 +1,6 @@
 import warnings
 from collections import OrderedDict
+from contextlib import nullcontext
 import torch, warnings, os
 import torch.nn.functional as F
 import numpy as np
@@ -20,7 +21,14 @@ from gsplat.cuda._torch_impl import (
 
 from ..utils import BasePipeline, ModelConfig, PipelineUnit, PipelineUnitRunner
 from ..utils.auxiliary import homo_matrix_inverse, average_filter, fast_perceptual_color_distance, pixel_to_world_coords
-from ..models import ModelManager, load_state_dict
+from ..models import ModelManager
+from ..models.utils import load_state_dict
+from ..auxiliary_models import WorldMirror
+from ..auxiliary_models.reconstructor_resolver import (
+    ReconstructorSpec,
+    format_missing_reconstructor_message,
+    resolve_reconstructor_spec,
+)
 from ..models.wan_video_dit import WanModel, RMSNorm, sinusoidal_embedding_1d
 from ..models.wan_video_text_encoder import WanTextEncoder, T5RelativeEmbedding, T5LayerNorm
 from ..models.wan_video_vae import WanVideoVAE, RMS_norm, CausalConv3d, Upsample
@@ -238,7 +246,8 @@ class WanVideoNeoVersePipeline(BasePipeline):
     @staticmethod
     def from_pretrained(
         local_model_path: str = "models",
-        reconstructor_path: str = "models/NeoVerse/reconstructor.ckpt",
+        reconstructor: str = "neoverse",
+        reconstructor_path: Optional[str] = None,
         pipeline_kwargs: dict = {},
         lora_path: Optional[str] = None,
         lora_alpha: float = 1.0,
@@ -246,12 +255,20 @@ class WanVideoNeoVersePipeline(BasePipeline):
         torch_dtype: torch.dtype = torch.bfloat16,
         enable_vram_management: bool = False,
     ):
-        # Initialize pipeline
         pipe = WanVideoNeoVersePipeline(device=device, torch_dtype=torch_dtype, pipeline_kwargs=pipeline_kwargs)
 
-        # Load models
+        reconstructor_spec = resolve_reconstructor_spec(
+            reconstructor=reconstructor,
+            reconstructor_path=reconstructor_path,
+            model_root=local_model_path,
+        )
+        if reconstructor_spec.deprecated_path_only:
+            warnings.warn(
+                "Passing only --reconstructor_path is deprecated. Prefer --reconstructor with optional --reconstructor_path override.",
+                DeprecationWarning,
+            )
+
         model_configs = [
-            ModelConfig(path=reconstructor_path, offload_device="cpu" if enable_vram_management else device),
             ModelConfig(local_model_path=local_model_path, model_id="NeoVerse", origin_file_pattern="diffusion_pytorch_model*.safetensors", offload_device="cpu" if enable_vram_management else device),
             ModelConfig(local_model_path=local_model_path, model_id="NeoVerse", origin_file_pattern="models_t5_umt5-xxl-enc-bf16.pth", offload_device="cpu" if enable_vram_management else device),
             ModelConfig(local_model_path=local_model_path, model_id="NeoVerse", origin_file_pattern="Wan2.1_VAE.pth", offload_device="cpu" if enable_vram_management else device),
@@ -266,12 +283,15 @@ class WanVideoNeoVersePipeline(BasePipeline):
                 torch_dtype=model_config.offload_dtype or torch_dtype
             )
 
-        # Load models
         pipe.text_encoder = model_manager.fetch_model("wan_video_text_encoder")
         pipe.dit = model_manager.fetch_model("wan_video_dit")
         pipe.vae = model_manager.fetch_model("wan_video_vae")
         pipe.control_branch = model_manager.fetch_model("wan_video_neoverse_controller")
-        pipe.reconstructor = model_manager.fetch_model("reconstructor")
+        pipe.reconstructor = WanVideoNeoVersePipeline.load_reconstructor(
+            reconstructor_spec,
+            device="cpu" if enable_vram_management else device,
+            torch_dtype=torch_dtype,
+        )
 
         # Size division factor
         if pipe.vae is not None:
@@ -292,6 +312,58 @@ class WanVideoNeoVersePipeline(BasePipeline):
         if enable_vram_management:
             pipe.enable_vram_management()
         return pipe
+
+
+    @staticmethod
+    def load_reconstructor(
+        reconstructor_spec: ReconstructorSpec,
+        device: Union[str, torch.device],
+        torch_dtype: torch.dtype,
+    ):
+        checkpoint_path = reconstructor_spec.resolved_path
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(format_missing_reconstructor_message(reconstructor_spec))
+
+        if reconstructor_spec.name == "neoverse":
+            model = WorldMirror()
+            state_dict = load_state_dict(checkpoint_path, device="cpu")
+            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=True)
+        elif reconstructor_spec.name == "da3":
+            from ..auxiliary_models.depth_anything_3.neoverse_adapter import DepthAnything3Reconstructor
+
+            state_dict = load_state_dict(checkpoint_path, device="cpu")
+            state_dict, model_kwargs = DepthAnything3Reconstructor.state_dict_converter().from_civitai(state_dict)
+            strict_load = model_kwargs.pop("strict_load", True)
+            upcast_to_float32 = model_kwargs.pop("upcast_to_float32", False)
+            model = DepthAnything3Reconstructor(**model_kwargs)
+            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict_load)
+            allowed_missing = {
+                'model.head.scratch.output_conv2_aux.1.2.weight',
+                'model.head.scratch.output_conv2_aux.1.2.bias',
+                'model.head.scratch.output_conv2_aux.2.2.weight',
+                'model.head.scratch.output_conv2_aux.2.2.bias',
+                'model.head.scratch.output_conv2_aux.3.2.weight',
+                'model.head.scratch.output_conv2_aux.3.2.bias',
+            }
+            if unexpected_keys or set(missing_keys) - allowed_missing:
+                raise RuntimeError(
+                    f"DA3 checkpoint at '{checkpoint_path}' is incompatible: "
+                    f"missing={len(missing_keys)}, unexpected={len(unexpected_keys)}"
+                )
+            if upcast_to_float32:
+                model = model.float()
+        else:
+            raise ValueError(f"Unsupported reconstructor '{reconstructor_spec.name}'.")
+
+        if missing_keys:
+            print(f"[{reconstructor_spec.name}] Missing keys during load: {len(missing_keys)}")
+        if unexpected_keys:
+            print(f"[{reconstructor_spec.name}] Unexpected keys during load: {len(unexpected_keys)}")
+        model = model.eval()
+        model.neoverse_reconstructor_name = reconstructor_spec.name
+        if reconstructor_spec.name == "neoverse":
+            return model.to(device=device, dtype=torch_dtype)
+        return model.to(device=device)
 
 
     @torch.no_grad()
@@ -432,7 +504,13 @@ class WanVideoUnit_4DPreprocesser(PipelineUnit):
             }
 
         pipe.load_models_to_device(self.onload_model_names)
-        with torch.amp.autocast("cuda", dtype=pipe.torch_dtype):
+        reconstructor_name = getattr(pipe.reconstructor, "neoverse_reconstructor_name", "neoverse")
+        autocast_context = (
+            torch.amp.autocast("cuda", dtype=pipe.torch_dtype)
+            if reconstructor_name == "neoverse" and str(pipe.device).startswith("cuda") and torch.cuda.is_available()
+            else nullcontext()
+        )
+        with autocast_context:
             recon_output = pipe.reconstructor(source_views, is_inference=False)
         context_num = (~source_views["is_target"]).sum()
         novel_context_poses = self.novel_view_sampling(

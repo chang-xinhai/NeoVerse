@@ -1,11 +1,13 @@
 import torch
 import os
 import argparse
+from contextlib import nullcontext
 import numpy as np
 from torchvision.transforms import functional as F
 from diffsynth.pipelines.wan_video_neoverse import WanVideoNeoVersePipeline
 from diffsynth import save_video
 from diffsynth.utils.auxiliary import CameraTrajectory, load_video, homo_matrix_inverse
+from diffsynth.auxiliary_models.reconstructor_resolver import SUPPORTED_RECONSTRUCTORS
 
 
 @torch.no_grad()
@@ -29,7 +31,13 @@ def generate_video(pipe, input_video, prompt, negative_prompt, cam_traj: CameraT
     if pipe.vram_management_enabled:
         pipe.reconstructor.to(device)
 
-    with torch.amp.autocast("cuda", dtype=pipe.torch_dtype):
+    reconstructor_name = getattr(pipe.reconstructor, "neoverse_reconstructor_name", "neoverse")
+    autocast_context = (
+        torch.amp.autocast("cuda", dtype=pipe.torch_dtype)
+        if reconstructor_name == "neoverse" and str(device).startswith("cuda") and torch.cuda.is_available()
+        else nullcontext()
+    )
+    with autocast_context:
         predictions = pipe.reconstructor(views, is_inference=True, use_motion=False)
 
     # Low-VRAM: offload reconstructor back to CPU
@@ -130,8 +138,11 @@ def parse_args():
     # Model parameters
     parser.add_argument("--model_path", default="models",
                         help="Model directory path (default: models)")
-    parser.add_argument("--reconstructor_path", default="models/NeoVerse/reconstructor.ckpt",
-                        help="Path to reconstructor checkpoint")
+    parser.add_argument("--reconstructor", default=None,
+                        choices=SUPPORTED_RECONSTRUCTORS,
+                        help="Built-in reconstructor selector")
+    parser.add_argument("--reconstructor_path", default=None,
+                        help="Optional custom checkpoint path or override for the selected reconstructor")
     parser.add_argument("--disable_lora", action="store_true",
                         help="Skip distilled LoRA loading")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
@@ -218,6 +229,7 @@ def main():
     print(f"Loading model from {args.model_path}...")
     pipe = WanVideoNeoVersePipeline.from_pretrained(
         local_model_path=args.model_path,
+        reconstructor=args.reconstructor,
         reconstructor_path=args.reconstructor_path,
         lora_path=lora_path,
         lora_alpha=1.0,

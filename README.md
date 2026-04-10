@@ -180,7 +180,8 @@ python inference.py --trajectory_file my_trajectory.json --validate_only
 | `--static_scene` | off | Enable static scene mode (see below) |
 | `--traj_mode` | `relative` | Trajectory coordinate mode (see below) |
 | `--alpha_threshold` | `1.0` | Alpha mask threshold (see below) |
-| `--reconstructor_path` | `models/NeoVerse/reconstructor.ckpt` | Path to reconstructor checkpoint |
+| `--reconstructor` | `neoverse` | Built-in reconstructor selector (`neoverse`, `da3`) |
+| `--reconstructor_path` | `None` | Optional checkpoint path override for the selected reconstructor |
 | `--num_frames` | `81` | Number of output frames |
 | `--height` / `--width` | `336` / `560` | Output resolution |
 | `--disable_lora` | off | Use full 50-step inference instead of 4-step distilled LoRA |
@@ -205,6 +206,9 @@ python app.py
 
 # With low-VRAM mode
 python app.py --low_vram
+
+# With an alternative reconstructor
+python app.py --reconstructor da3
 ```
 
 The demo walks you through four steps:
@@ -216,34 +220,68 @@ The demo walks you through four steps:
 
 ### Alternative Reconstructors
 
-NeoVerse also supports alternative reconstructors such as [Depth Anything 3](https://depth-anything-3.github.io/). Their predicted depth and camera parameters can be converted to pseudo Gaussian splats to plug into NeoVerse's pipeline.
+NeoVerse supports built-in reconstructor selection via `--reconstructor`. The default is `neoverse`, and the currently supported alternative selector is [Depth Anything 3](https://depth-anything-3.github.io/).
 
-Download the Depth Anything 3 checkpoint:
+Built-in checkpoint locations:
+
+```text
+models/
+├── NeoVerse/reconstructor.ckpt
+└── da3_giant_1.1.safetensors
+```
+
+Prepare the DA3 checkpoint:
 
 ```bash
-# Download model.safetensors from Hugging Face
+mkdir -p models
 wget https://huggingface.co/depth-anything/DA3-GIANT-1.1/resolve/main/model.safetensors -O models/da3_giant_1.1.safetensors
 ```
 
-Then pass it via `--reconstructor_path`:
+After download, verify the file is present before running inference:
+
+```bash
+ls -lh models/da3_giant_1.1.safetensors
+```
+
+Then select the reconstructor directly:
 
 ```bash
 # CLI inference with Depth Anything 3
 python inference.py \
     --input_path examples/videos/driving.mp4 \
     --trajectory_file examples/trajectories/custom.json \
-    --reconstructor_path models/da3_giant_1.1.safetensors \
+    --reconstructor da3 \
+    --low_vram \
     --output_path outputs/custom_traj_da3.mp4
 
 # Gradio demo with Depth Anything 3
-python app.py --reconstructor_path models/da3_giant_1.1.safetensors
+python app.py --reconstructor da3 --low_vram
+```
+
+For advanced use, you can still override the checkpoint path for a selected reconstructor, or use the legacy path-only form for backward compatibility:
+
+```bash
+# Override the checkpoint path for DA3 explicitly
+python inference.py \
+    --input_path examples/videos/driving.mp4 \
+    --trajectory_file examples/trajectories/custom.json \
+    --reconstructor da3 \
+    --reconstructor_path /path/to/da3_giant_1.1.safetensors \
+    --output_path outputs/custom_traj_da3.mp4
+
+# Legacy path-only compatibility
+python inference.py \
+    --input_path examples/videos/driving.mp4 \
+    --trajectory_file examples/trajectories/custom.json \
+    --reconstructor_path models/da3_giant_1.1.safetensors \
+    --output_path outputs/custom_traj_da3.mp4
 ```
 
 ## Model Architecture
 
 NeoVerse has two main components:
 
-1. **Reconstructor** — Recovers 3D scene structure (Gaussian Splats + camera poses) from a monocular video. In the released version, we provide a [WorldMirror-based](https://3d-models.hunyuan.tencent.com/world/) reconstructor finetuned on 3D/4D datasets. What's more, NeoVerse is compatible with other reconstructors like [Depth Anything 3](https://depth-anything-3.github.io/) by converting their outputs to pseudo Gaussian splats.
+1. **Reconstructor** — Recovers 3D scene structure (Gaussian Splats + camera poses) from a monocular video. In the released version, we provide a [WorldMirror-based](https://3d-models.hunyuan.tencent.com/world/) reconstructor finetuned on 3D/4D datasets. NeoVerse also supports [Depth Anything 3](https://depth-anything-3.github.io/) as an alternative reconstructor by converting its outputs to pseudo Gaussian splats through the same pipeline contract.
 2. **Video Diffusion Model** — Generates high-quality video frames conditioned on the reconstructed scene. Here we use a [WAN 2.1](https://github.com/Wan-Video/Wan2.1) backbone with [a 4-step distilled LoRA](https://huggingface.co/lightx2v/Wan2.1-T2V-14B-StepDistill-CfgDistill-Lightx2v/tree/main/loras) for a fast inference speed.
 
 For technical details, please refer to our [paper](https://arxiv.org/abs/2601.00393).
