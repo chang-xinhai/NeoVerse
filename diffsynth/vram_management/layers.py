@@ -13,7 +13,12 @@ class AutoTorchModule(torch.nn.Module):
         super().__init__()
         
     def check_free_vram(self):
-        gpu_mem_state = torch.cuda.mem_get_info(self.computation_device)
+        device = self.computation_device
+        if isinstance(device, str) and device == "cuda":
+            device = "cuda:0"
+        elif isinstance(device, torch.device) and device.type == "cuda" and device.index is None:
+            device = torch.device("cuda:0")
+        gpu_mem_state = torch.cuda.mem_get_info(device)
         used_memory = (gpu_mem_state[1] - gpu_mem_state[0]) / (1024 ** 3)
         return used_memory < self.vram_limit
 
@@ -164,4 +169,3 @@ def enable_vram_management_recursively(model: torch.nn.Module, module_map: dict,
 def enable_vram_management(model: torch.nn.Module, module_map: dict, module_config: dict, max_num_param=None, overflow_module_config: dict = None, vram_limit=None):
     enable_vram_management_recursively(model, module_map, module_config, max_num_param, overflow_module_config, total_num_param=0, vram_limit=vram_limit)
     model.vram_management_enabled = True
-

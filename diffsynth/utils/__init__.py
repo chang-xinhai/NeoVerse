@@ -144,7 +144,12 @@ class BasePipeline(torch.nn.Module):
 
 
     def get_vram(self):
-        return torch.cuda.mem_get_info(self.device)[1] / (1024 ** 3)
+        device = self.device
+        if isinstance(device, str) and device == "cuda":
+            device = "cuda:0"
+        elif isinstance(device, torch.device) and device.type == "cuda" and device.index is None:
+            device = torch.device("cuda:0")
+        return torch.cuda.mem_get_info(device)[1] / (1024 ** 3)
 
 
     def freeze_except(self, trainable_module_list, lora_base_model=None):
