@@ -325,9 +325,14 @@ class WanVideoNeoVersePipeline(BasePipeline):
             raise FileNotFoundError(format_missing_reconstructor_message(reconstructor_spec))
 
         if reconstructor_spec.name == "neoverse":
-            model = WorldMirror()
             state_dict = load_state_dict(checkpoint_path, device="cpu")
-            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=True)
+            state_dict, model_kwargs = WorldMirror.state_dict_converter().from_civitai(state_dict)
+            strict_load = model_kwargs.pop("strict_load", True)
+            upcast_to_float32 = model_kwargs.pop("upcast_to_float32", False)
+            model = WorldMirror(**model_kwargs)
+            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict_load)
+            if upcast_to_float32:
+                model = model.float()
         elif reconstructor_spec.name == "da3":
             from ..auxiliary_models.depth_anything_3.neoverse_adapter import DepthAnything3Reconstructor
 
