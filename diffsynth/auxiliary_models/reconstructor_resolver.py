@@ -11,11 +11,12 @@ RECONSTRUCTOR_ALIASES = {
 RECONSTRUCTOR_DEFAULT_PATHS = {
     "neoverse": os.path.join("NeoVerse", "reconstructor.ckpt"),
     "da3": "da3_giant_1.1.safetensors",
+    "page4d": os.path.join("PAGE4D", "checkpoint_nomask.pt"),
 }
 SUPPORTED_RECONSTRUCTORS = tuple(
-    [DEFAULT_RECONSTRUCTOR, "da3", *RECONSTRUCTOR_ALIASES.keys()]
+    [DEFAULT_RECONSTRUCTOR, "da3", "page4d", *RECONSTRUCTOR_ALIASES.keys()]
 )
-DETECTABLE_RECONSTRUCTORS = {"neoverse", "da3"}
+DETECTABLE_RECONSTRUCTORS = {"neoverse", "da3", "page4d"}
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,8 @@ def infer_reconstructor_name_from_path(path: str) -> str | None:
     lowered = path.lower()
     if "da3" in lowered or "depth-anything" in lowered:
         return "da3"
+    if "page4d" in lowered or "checkpoint_nomask" in lowered:
+        return "page4d"
     if basename == "reconstructor.ckpt" or "neoverse" in lowered or "worldmirror" in lowered:
         return "neoverse"
     return None

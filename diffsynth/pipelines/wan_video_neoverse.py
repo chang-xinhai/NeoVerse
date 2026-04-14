@@ -357,6 +357,16 @@ class WanVideoNeoVersePipeline(BasePipeline):
                 )
             if upcast_to_float32:
                 model = model.float()
+        elif reconstructor_spec.name == "page4d":
+            from ..auxiliary_models.page4d.neoverse_adapter import load_vggt_family_reconstructor
+
+            model = load_vggt_family_reconstructor(
+                reconstructor_name=reconstructor_spec.name,
+                checkpoint_path=checkpoint_path,
+                device=device,
+                torch_dtype=torch_dtype,
+            )
+            missing_keys, unexpected_keys = [], []
         else:
             raise ValueError(f"Unsupported reconstructor '{reconstructor_spec.name}'.")
 
@@ -368,6 +378,8 @@ class WanVideoNeoVersePipeline(BasePipeline):
         model.neoverse_reconstructor_name = reconstructor_spec.name
         if reconstructor_spec.name == "neoverse":
             return model.to(device=device, dtype=torch_dtype)
+        if reconstructor_spec.name == "page4d":
+            return model
         return model.to(device=device)
 
 
