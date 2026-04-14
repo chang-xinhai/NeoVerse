@@ -1,4 +1,6 @@
 import torch, warnings, glob, os
+
+from .gaussian_bundle import export_neoverse_4dgs_bundle
 import numpy as np
 from PIL import Image
 from einops import repeat, reduce, rearrange

@@ -8,12 +8,14 @@ from diffsynth.pipelines.wan_video_neoverse import WanVideoNeoVersePipeline
 from diffsynth import save_video
 from diffsynth.utils.auxiliary import CameraTrajectory, load_video, homo_matrix_inverse
 from diffsynth.auxiliary_models.reconstructor_resolver import SUPPORTED_RECONSTRUCTORS
+from diffsynth.utils.gaussian_bundle import export_neoverse_4dgs_bundle
 
 
 @torch.no_grad()
 def generate_video(pipe, input_video, prompt, negative_prompt, cam_traj: CameraTrajectory,
                    output_path="outputs/output.mp4", alpha_threshold=1.0, static_flag=False,
-                   seed=42, cfg_scale=1.0, num_inference_steps=4):
+                   seed=42, cfg_scale=1.0, num_inference_steps=4,
+                   export_4dgs_bundle: str | None = None, input_path: str | None = None):
     device = pipe.device
     height, width = input_video[0].size[1], input_video[0].size[0]
     views = {
@@ -49,6 +51,18 @@ def generate_video(pipe, input_video, prompt, negative_prompt, cam_traj: CameraT
     K = predictions["rendered_intrinsics"][0]
     input_cam2world = predictions["rendered_extrinsics"][0]
     timestamps = predictions["rendered_timestamps"][0]
+
+    if export_4dgs_bundle is not None:
+        manifest_path = export_neoverse_4dgs_bundle(
+            predictions,
+            export_4dgs_bundle,
+            image_width=width,
+            image_height=height,
+            reconstructor_name=reconstructor_name,
+            scene_type="Static scene" if static_flag else "General scene",
+            source_path=input_path,
+        )
+        print(f"4DGS bundle exported to: {manifest_path.parent}")
 
     if static_flag:
         K = K[:1].repeat(len(cam_traj), 1, 1)
@@ -167,6 +181,8 @@ def parse_args():
                         help="Save intermediate rendering visualizations")
     parser.add_argument("--low_vram", action="store_true",
                         help="Enable low-VRAM mode with model offloading (reduces peak VRAM usage)")
+    parser.add_argument("--export_4dgs_bundle", default=None,
+                        help="Optional output directory for exporting a headless SuperSplat-compatible 4DGS PLY sequence bundle")
 
     return parser.parse_args()
 
@@ -269,6 +285,8 @@ def main():
         seed=args.seed,
         cfg_scale=cfg_scale,
         num_inference_steps=num_inference_steps,
+        export_4dgs_bundle=args.export_4dgs_bundle,
+        input_path=args.input_path,
     )
     print(f"Done! Output saved to: {output_path}")
     return 0

@@ -2,6 +2,7 @@ import argparse
 import gc
 import json
 import os
+import uuid
 from contextlib import nullcontext
 import torch
 import numpy as np
@@ -13,6 +14,7 @@ from diffsynth.pipelines.wan_video_neoverse import WanVideoNeoVersePipeline
 from diffsynth import save_video
 from diffsynth.utils.auxiliary import CameraTrajectory, load_video, homo_matrix_inverse
 from diffsynth.utils.app import extract_point_cloud, build_scene_glb
+from diffsynth.utils.gaussian_bundle import export_neoverse_4dgs_bundle
 from diffsynth.auxiliary_models.reconstructor_resolver import SUPPORTED_RECONSTRUCTORS
 
 parser = argparse.ArgumentParser()
@@ -187,9 +189,23 @@ def reconstruct(state):
     state["height"] = pil_images[0].size[1]
     state["width"] = pil_images[0].size[0]
 
+    bundle_path = os.path.join(OUTPUT_ROOT, f"4dgs_bundle_{uuid.uuid4().hex}")
+    manifest_path = export_neoverse_4dgs_bundle(
+        predictions,
+        bundle_path,
+        image_width=state["width"],
+        image_height=state["height"],
+        reconstructor_name=reconstructor_name,
+        scene_type=scene_type,
+        source_path=None,
+    )
+    state["bundle_manifest_path"] = str(manifest_path)
+    state["bundle_dir"] = str(manifest_path.parent)
+
     # Build GLB: 11-frame point cloud, all S cameras shown
     scene = build_scene_glb(points, colors, frame_indices, input_cam2world.cpu().numpy())
     glb_path = _export_scene(scene)
+    print(f"4DGS bundle exported to: {manifest_path.parent}")
     return state, glb_path, gr.update(interactive=True)
 
 

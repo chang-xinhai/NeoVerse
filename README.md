@@ -187,7 +187,58 @@ python inference.py --trajectory_file my_trajectory.json --validate_only
 | `--disable_lora` | off | Use full 50-step inference instead of 4-step distilled LoRA |
 | `--low_vram` | off | Enable low-VRAM mode with model offloading (see below) |
 | `--vis_rendering` | off | Save target-trajectory rendering visualizations alongside the output |
+| `--export_4dgs_bundle` | — | Export a headless SuperSplat-compatible 4DGS PLY-sequence bundle |
 | `--seed` | `42` | Random seed |
+
+#### Outputs Layout
+
+NeoVerse now keeps generated artifacts under purpose-based subdirectories in `outputs/`:
+
+```text
+outputs/
+├── bundles/
+│   └── 4dgs/
+│       └── <bundle_name>/
+│           ├── bundle_manifest.json
+│           ├── cameras.json
+│           ├── timeline.json
+│           ├── gaussians/
+│           │   ├── animation_0001.ply
+│           │   ├── animation_0002.ply
+│           │   └── ...
+│           └── metadata/
+├── demos/
+│   ├── driving/
+│   ├── robot/
+│   ├── smoke/
+│   └── trajectory/
+├── tools/
+└── trajectories/
+```
+
+Use `--output_path` for rendered videos and `--export_4dgs_bundle` for downloadable 4DGS bundles. For example:
+
+```bash
+python inference.py \
+    --input_path examples/videos/robot.mp4 \
+    --trajectory orbit_left \
+    --reconstructor da3 \
+    --low_vram \
+    --disable_lora \
+    --output_path outputs/demos/robot/robot_orbit_left.mp4 \
+    --export_4dgs_bundle outputs/bundles/4dgs/robot_4dgs_bundle_da3
+```
+
+#### 4DGS Visualization
+
+The exported 4DGS bundle is a visualization-oriented PLY sequence bundle:
+
+- `bundle_manifest.json` declares `export_format: "ply_sequence"` and `super_splat_compatible: true`
+- `timeline.json` maps each `frame_index` / `timestamp` to `gaussians/animation_XXXX.ply`
+- `cameras.json` stores per-frame camera intrinsics and poses
+- `metadata/` records attribute schema, coordinate conventions, and reconstruction info
+
+For local visualization, download the bundle folder and import the ordered `gaussians/animation_XXXX.ply` sequence into SuperSplat. The bundle is intended for visualization/export handoff; Neoverse reimport is currently unsupported.
 
 **Scene Type** (`--static_scene`) — By default, NeoVerse treats the input as a *general scene*: frames are sampled across the full time range to capture camera and object motion. When `--static_scene` is set, all frames share the same timestamp, which is appropriate for a single image or a video with a completely stationary camera.
 

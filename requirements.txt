@@ -29,6 +29,7 @@ moviepy==1.0.3
 # Demo
 gradio
 trimesh
+plyfile
 
 # Training
 accelerate
