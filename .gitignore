@@ -5,6 +5,7 @@ __pycache__/
 .vscode
 .gradio
 .claude
+data/
 
 /outputs
 /models
