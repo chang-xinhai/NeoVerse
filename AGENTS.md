@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code / Codex when working with code in this repository.
 
 ## Project overview
 
@@ -58,7 +58,20 @@ Current machine snapshot:
 - CPU: 2x Intel Xeon Platinum 8374C @ 2.70GHz, 144 logical CPUs total.
 - GPU: 5x NVIDIA L40, each with ~46 GB VRAM.
 
-When running experiments, prefer `--low_vram` and run on a single idle GPU rather than occupying multiple cards. Check GPU availability first and choose a mostly free device before starting long runs.
+### GPU allocation
+
+- **Always run on a single GPU** unless the task explicitly requires multi-GPU setup.
+- **Check for idle GPUs first**: run `nvidia-smi` and look for GPUs with low memory usage.
+- **When multiple independent tasks exist**, you may run them in parallel on separate idle GPUs.
+- **If no idle GPU is available**: you MUST stop and report the `nvidia-smi` output to the user, letting them decide which GPU(s) to occupy. Do not automatically steal a GPU from a running job.
+
+### Running experiments
+
+When starting a run:
+1. Run `nvidia-smi` to check GPU status.
+2. Select a GPU with the lowest memory usage (preferably < 20% used).
+3. Set `CUDA_VISIBLE_DEVICES=<chosen_gpu>` for the job.
+4. If all GPUs are heavily utilized (> 70% memory), do not proceed — report to user.
 
 ## High-level architecture
 
@@ -111,6 +124,8 @@ Before starting substantial work, check whether any repo-local Claude context fi
 If future work updates durable workflow conventions or stable project context, keep the repository’s Claude context files aligned.
 
 Do not accidentally commit temporary scratch files.
+- Prefer putting temporary or review-stage scripts in `scripts/inbox/` instead of `/tmp/`.
+- Keep `scripts/inbox/` gitignored; it is the preferred staging area for ad hoc or review-only scripts before migration into a permanent repo location.
 
 ## Repository state reminder
 
